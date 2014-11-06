@@ -8,3 +8,6 @@ SOURCES += main.cpp
 include(deployment.pri)
 qtcAddDeployment()
 
+OTHER_FILES += \
+    .gitignore
+
