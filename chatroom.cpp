@@ -7,7 +7,7 @@
  *     http://creativecommons.org/publicdomain/zero/1.0/deed.es
  */
 
-/* @NOTA
+/* @1@NOTA
  * El proyecto utiliza aspectos introducidos con C++11. Por ello hay que
  * añadir al archivo de proyecto la línea CONFIG += c++11 o compilar
  * desde la línea de comandos usando incluyendo la opción -std=c++11
@@ -18,7 +18,7 @@
 #include <string>
 #include <iostream>
 
-/* @NOTA
+/* @1@NOTA
  * Al investigar como funcionan las llamadas al sistema hay que consultar las
  * páginas del manual (p. ej. man shm_open) y observar en la parte superior
  * las cabeceras que hacen falta para añadirlas aquí.
@@ -131,12 +131,12 @@ int ChatRoom::connectTo(const std::string &chatRoomId)
         fd = shm_open(name.c_str(), O_RDWR, 0666);
     }
 
-    /* @NOTA
+    /* @1@NOTA
      * El objeto de memoria compartida se puede ver en el sistema de archivos
      * en /dev/shm
      */
 
-    /* @NOTA
+    /* @1@NOTA
      * Hay que notar que el responsable del objeto de memoria compartida
      * debe destruirlo con shm_unlink() al salir para que se pueda volver a
      * crear en la siguiente ejecución. Lamentablemente si el proceso recibe
