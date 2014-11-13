@@ -226,7 +226,7 @@ void ChatRoom::send()
     if ( sharedMessage_ == nullptr ) return;
 
     while (1) {
-        std::cout << "++ ";
+        std::cout << "-- ";
 
         std::string message;
         std::getline(std::cin, message);
@@ -255,7 +255,7 @@ void ChatRoom::receive()
         std::string message;
         std::string username;
 
-        std::cout << "-- ";
+        std::cout << "++ ";
         std::cout.flush();
 
         // Bloquear el mutex hasta salir de la función
