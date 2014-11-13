@@ -27,6 +27,7 @@ int main()
 
     int result = chatRoom.connectTo(username);
     if ( result < 0 ) {
+        std::cerr << "error: ";
         switch (result) {
         case -1:
             std::cerr << "instancia ya conectada a una sala";
@@ -47,6 +48,8 @@ int main()
             std::cerr << "error desconocido";
         }
         std::cerr << std::endl;
+
+        exit(3);
     }
 
     // Ejecutar el chat
