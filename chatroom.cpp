@@ -211,56 +211,65 @@ void ChatRoom::run()
     // Volver si no estamos conectados a una sala de chat
     if ( sharedMessage_ == nullptr ) return;
 
-    while (1) {
-        std::string message;
-
-        // El propietario es el único que envía. Los demás reciben.
-        if ( isSharedMemoryObjectOwner_ ) {
-            std::cout << "++ ";
-            std::getline(std::cin, message);
-
-            if ( message == ":quit" ) break;
-            else send(message);
-        }
-        else {
-            std::cout << "-- ";
-            std::cout.flush();
-            receive(message);
-            std::cout << message << std::endl;
-        }
+    // El propietario es el único que envía. Los demás reciben.
+    if ( isSharedMemoryObjectOwner_ ) {
+        send();
+    }
+    else {
+        receive();
     }
 }
 
-void ChatRoom::send(const std::string& message)
+void ChatRoom::send()
 {
     // Volver si no estamos conectados a una sala de chat
     if ( sharedMessage_ == nullptr ) return;
 
-    // Bloquear el mutex hasta salir de la función
-    std::unique_lock<std::mutex> lock(sharedMessage_->mutex);
+    while (1) {
+        std::cout << "++ ";
 
-    message.copy(sharedMessage_->message, message.length());
-    sharedMessage_->messageSize = message.length();
-    sharedMessage_->messageCounter++;
+        std::string message;
+        std::getline(std::cin, message);
 
-    sharedMessage_->newMessage.notify_all();
+        if ( message == ":quit" ) break;
 
-//    lock.unlock();
+        // Bloquear el mutex hasta salir de la función
+        std::unique_lock<std::mutex> lock(sharedMessage_->mutex);
+
+        message.copy(sharedMessage_->message, message.length());
+        sharedMessage_->messageSize = message.length();
+        sharedMessage_->messageCounter++;
+
+        sharedMessage_->newMessage.notify_all();
+
+        lock.unlock();
+    }
 }
 
-void ChatRoom::receive(std::string& message)
+void ChatRoom::receive()
 {
     // Volver si no estamos conectados a una sala de chat
     if ( sharedMessage_ == nullptr ) return;
 
-    // Bloquear el mutex hasta salir de la función
-    std::unique_lock<std::mutex> lock(sharedMessage_->mutex);
+    while (1) {
+        std::string message;
+        std::string username;
 
-    while ( messageReceiveCounter_ >= sharedMessage_->messageCounter )
-        sharedMessage_->newMessage.wait(lock);
+        std::cout << "-- ";
+        std::cout.flush();
 
-    messageReceiveCounter_ = sharedMessage_->messageCounter;
-    message.assign(sharedMessage_->message, sharedMessage_->messageSize);
+        // Bloquear el mutex hasta salir de la función
+        std::unique_lock<std::mutex> lock(sharedMessage_->mutex);
 
-//    lock.unlock();
+        while ( messageReceiveCounter_ >= sharedMessage_->messageCounter )
+            sharedMessage_->newMessage.wait(lock);
+
+
+        messageReceiveCounter_ = sharedMessage_->messageCounter;
+        message.assign(sharedMessage_->message, sharedMessage_->messageSize);
+
+        lock.unlock();
+
+        std::cout << message << std::endl;
+    }
 }

@@ -38,10 +38,10 @@ private:
     // compartida. El propietario es el responsable de su destrucción
     bool isSharedMemoryObjectOwner_;
 
-    // Enviar un mensaje a la sala de chat
-    void send(const std::string& message);
-    // Recibir un mensaje de la sala de chat
-    void receive(std::string& message);
+    // Enviar mensajes a la sala de chat
+    void send();
+    // Recibir mensajes de la sala de chat
+    void receive();
 };
 
 #endif // CHATROOM_H
