@@ -50,6 +50,9 @@ struct ChatRoom::SharedMessage
     unsigned messageSize;
     unsigned messageCounter;
 
+    char username[255];
+    unsigned usernameSize;
+
     std::mutex mutex;
     std::condition_variable newMessage;
 
@@ -99,7 +102,7 @@ ChatRoom::~ChatRoom()
 // función que falló (-2 => shm_open(), -3 => ftruncate, etc.) En caso de
 // fallo la variable global errno indica el motivo del error.
 //
-int ChatRoom::connectTo(const std::string &chatRoomId)
+int ChatRoom::connectTo(const std::string& chatRoomId, const std::string& username)
 {
     bool owner = false;
     int returnValue = -1;
@@ -109,6 +112,8 @@ int ChatRoom::connectTo(const std::string &chatRoomId)
     if ( sharedMessage_ != nullptr ) {
         return returnValue;
     }
+
+    username_ = username;
 
     --returnValue;
 
@@ -256,6 +261,9 @@ void ChatRoom::send(const std::string& message)
     sharedMessage_->messageSize = message.length();
     sharedMessage_->messageCounter++;
 
+    username_.copy(sharedMessage_->username, username_.length());
+    sharedMessage_->usernameSize = username_.length();
+
     sharedMessage_->newMessage.notify_all();
 }
 
@@ -263,16 +271,19 @@ void ChatRoom::runReceiver()
 {
     while (1) {
         std::string message;
+        std::string username;
 
         std::cout << "++ ";
         std::cout.flush();
 
-        receive(message);
-        std::cout << message << std::endl;
+        receive(message, username);
+        if ( username != username_ ) {
+            std::cout << username << ": " << message << std::endl;
+        }
     }
 }
 
-void ChatRoom::receive(std::string& message)
+void ChatRoom::receive(std::string& message, std::string& username)
 {
     // Bloquear el mutex hasta salir de la función
     std::unique_lock<std::mutex> lock(sharedMessage_->mutex);
@@ -282,4 +293,5 @@ void ChatRoom::receive(std::string& message)
 
     messageReceiveCounter_ = sharedMessage_->messageCounter;
     message.assign(sharedMessage_->message, sharedMessage_->messageSize);
+    username.assign(sharedMessage_->username, sharedMessage_->usernameSize);
 }
