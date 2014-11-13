@@ -16,6 +16,7 @@
 #include <condition_variable>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <iostream>
 
 /* @1@NOTA
@@ -216,13 +217,15 @@ void ChatRoom::run()
     // Volver si no estamos conectados a una sala de chat
     if ( sharedMessage_ == nullptr ) return;
 
-    // El propietario es el único que envía. Los demás reciben.
-    if ( isSharedMemoryObjectOwner_ ) {
-        runSender();
-    }
-    else {
-        runReceiver();
-    }
+    /* @2@NOTA
+     * Como usamos métodos, hay que pasar como primer argumento el puntero
+     * al objeto.
+     */
+    std::thread send_thread(&ChatRoom::runSender, this);
+    std::thread receive_thread(&ChatRoom::runReceiver, this);
+
+    // Espera a que el hilo de envío termine.
+    send_thread.join();
 }
 
 void ChatRoom::runSender()
