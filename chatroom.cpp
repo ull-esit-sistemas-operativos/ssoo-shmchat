@@ -230,11 +230,15 @@ void ChatRoom::run()
 
 void ChatRoom::runSender()
 {
+<<<<<<< HEAD
     // El fin de archivo (EOF) en la entrada estándar se indica
     // pulsando Ctrl+D
     while ( ! std::cin.eof() ) {
         std::cout << "-- ";
 
+=======
+    while (1) {
+>>>>>>> mover el prompt a la recepción
         std::string message;
         std::getline(std::cin, message);
 
@@ -276,12 +280,9 @@ void ChatRoom::runReceiver()
         std::string message;
         std::string username;
 
-        std::cout << "++ ";
-        std::cout.flush();
-
         receive(message, username);
         if ( username != username_ ) {
-            std::cout << username << ": " << message << std::endl;
+            std::cout << "++ " << username << ": " << message << std::endl;
         }
     }
 }
