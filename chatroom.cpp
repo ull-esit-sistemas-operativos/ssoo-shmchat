@@ -222,7 +222,9 @@ void ChatRoom::run()
 
 void ChatRoom::runSender()
 {
-    while (1) {
+    // El fin de archivo (EOF) en la entrada estándar se indica
+    // pulsando Ctrl+D
+    while ( ! std::cin.eof() ) {
         std::cout << "-- ";
 
         std::string message;
