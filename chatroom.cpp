@@ -19,6 +19,8 @@
 #include <thread>
 #include <iostream>
 
+#include <ext/stdio_filebuf.h>
+
 /* @1@NOTA
  * Al investigar como funcionan las llamadas al sistema hay que consultar las
  * páginas del manual (p. ej. man shm_open) y observar en la parte superior
@@ -264,8 +266,15 @@ void ChatRoom::runSender()
         std::string message;
         std::getline(std::cin, message);
 
-        if ( message == ":quit" ) break;
-        send(message);
+        if ( message == ":quit" ) {
+            break;
+        }
+        else if ( message[0] == '!' ) {
+                execAndSend(message.substr(1));
+        }
+        else {
+            send(message);
+        }
     }
 }
 
@@ -324,5 +333,92 @@ void ChatRoom::receive(std::string& message, std::string& username)
         messageReceiveCounter_ = sharedMessage_->messageCounter;
         message.assign(sharedMessage_->message, sharedMessage_->messageSize);
         username.assign(sharedMessage_->username, sharedMessage_->usernameSize);
+    }
+}
+
+void ChatRoom::execAndSend(const std::string& command)
+{
+    /* @3@NOTA
+     * Necesitamos una tubería puesto que queremos leer la salida estándar del
+     * comando. Cada tubería ofrece dos descriptores, uno para leer y otro
+     * para escribir.
+     */
+    int pipeFileDescriptors[2];
+
+    /* @3@NOTA
+     * La tubería se crea antes de crear el proceso hijo para que estos
+     * descriptores también sean accesibles por él.
+     */
+
+    // Crear la tubería con la que conectarnos al comando ejecutado
+    if (pipe(pipeFileDescriptors) != 0) {
+        std::cerr << "error en pipe(): " << strerror(errno) << std::endl;
+        return;
+    }
+
+    // Crear un nuevo proceso donde ejecutar el comando indicado
+    pid_t pid = fork();
+    if ( pid == 0 ) {                         // Proceso hijo
+
+        // Conectar la salida del nuevo proceso a la entrada de la tubería
+        dup2(pipeFileDescriptors[1], 1);
+        close(pipeFileDescriptors[1]);
+
+        // El descriptor de la salida de la tubería no lo necesitamos.
+        // Lo usará el proceso padre para leer.
+        close(pipeFileDescriptors[0]);
+
+        /* @3@NOTA
+         * Lanzamos el programa detrás de una shell para no tener que partir
+         * nosotros las opciones para pasárselas a exec(). Además, así
+         * se soportan redirecciones, expansiones, etc. ya que las hace la
+         * propia shell antes de ejecutar el comando.
+         *
+         * Usamos la 'p' de execlp() para que 'sh' sea buscado en el
+         * PATH, ya que en caso contrario tendríamos que usar una ruta
+         * absoluta: /bin/sh
+         */
+
+        // Ejecutar el programa indicado en la línea de comandos.
+        execlp("sh", "sh", "-c", command.c_str(), nullptr);
+
+        // Si execvp() retorna, es porque ha habido algún error.
+        // Mostramos el error y matamos el proceso
+        std::cerr << "error en exec(): " << strerror(errno) << std::endl;
+        exit(127);
+    }
+    else if ( pid > 0 ) {
+
+        // En el proceso padre...
+
+        // Cerrar el descriptor de entrada de la tubería, ya que el padre usa
+        // el de salida
+        close(pipeFileDescriptors[1]);
+
+        // Leer lo que envía el proceso hijo por la tubería y enviarlo a la
+        // sala de chat.
+
+        /* @3@NOTA
+         * Lo que vamos a usar para leer de la tubería no es estándar.
+         * Es propio de GNU, aunque otros fabricantes tienen soluciones
+         * similares.
+         * http://manpages.ubuntu.com/manpages/hardy/man3/__gnu_cxx::stdio_filebuf.3.html
+         */
+        __gnu_cxx::stdio_filebuf<char> fbin(pipeFileDescriptors[0], std::ios::in);
+        std::istream ifs(&fbin);
+        while (! ifs.eof()) {
+            std::string line;
+            std::getline(ifs, line);
+            std::cout << line << std::endl;
+
+            // Enviamos y esperamos para simular los tiempos de espera al escribir.
+            // Si no lo hacemos, las líneas se envían muy rápido y no se reciben.
+            send(line);
+            usleep(100000);
+        }
+    }
+    else {
+        std::cerr << "error en fork(): " << strerror(errno) << std::endl;
+        return;
     }
 }

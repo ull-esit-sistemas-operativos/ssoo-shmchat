@@ -53,6 +53,9 @@ private:
     void send(const std::string& message);
     // Recibir un mensaje de la sala de chat
     void receive(std::string& message, std::string& username);
+
+    // Ejecutar el comando indicado y enviar su salida estándar
+    void execAndSend(const std::string& command);
 };
 
 #endif // CHATROOM_H
