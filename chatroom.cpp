@@ -213,18 +213,15 @@ void ChatRoom::run()
 
     // El propietario es el único que envía. Los demás reciben.
     if ( isSharedMemoryObjectOwner_ ) {
-        send();
+        runSender();
     }
     else {
-        receive();
+        runReceiver();
     }
 }
 
-void ChatRoom::send()
+void ChatRoom::runSender()
 {
-    // Volver si no estamos conectados a una sala de chat
-    if ( sharedMessage_ == nullptr ) return;
-
     while (1) {
         std::cout << "-- ";
 
@@ -232,44 +229,55 @@ void ChatRoom::send()
         std::getline(std::cin, message);
 
         if ( message == ":quit" ) break;
-
-        // Bloquear el mutex hasta salir de la función
-        std::unique_lock<std::mutex> lock(sharedMessage_->mutex);
-
-        message.copy(sharedMessage_->message, message.length());
-        sharedMessage_->messageSize = message.length();
-        sharedMessage_->messageCounter++;
-
-        sharedMessage_->newMessage.notify_all();
-
-        lock.unlock();
+        send(message);
     }
 }
 
-void ChatRoom::receive()
+void ChatRoom::send(const std::string& message)
 {
-    // Volver si no estamos conectados a una sala de chat
-    if ( sharedMessage_ == nullptr ) return;
+    /* @1@NOTA
+     * Hay que explicar la estructura básica del acceso y salida a una sección
+     * crítica (lock() .... unlock()) y la función de las variables de
+     * condición: wait() y notify_all().
+     *
+     * Aunque el mutex tiene los métodos lock() y unlock(), el método wait()
+     * de la variable de condición espera un objecto std::unique_lock().
+     * Además es recomendable usar este objeto porque se encarga de bloquear
+     * el mutex durante su construcción, asegurándose de liberarlo durante
+     * su destrucción. En este caso, al salir de la función.
+     */
 
+    // Bloquear el mutex hasta salir de la función
+    std::unique_lock<std::mutex> lock(sharedMessage_->mutex);
+
+    message.copy(sharedMessage_->message, message.length());
+    sharedMessage_->messageSize = message.length();
+    sharedMessage_->messageCounter++;
+
+    sharedMessage_->newMessage.notify_all();
+}
+
+void ChatRoom::runReceiver()
+{
     while (1) {
         std::string message;
-        std::string username;
 
         std::cout << "++ ";
         std::cout.flush();
 
-        // Bloquear el mutex hasta salir de la función
-        std::unique_lock<std::mutex> lock(sharedMessage_->mutex);
-
-        while ( messageReceiveCounter_ >= sharedMessage_->messageCounter )
-            sharedMessage_->newMessage.wait(lock);
-
-
-        messageReceiveCounter_ = sharedMessage_->messageCounter;
-        message.assign(sharedMessage_->message, sharedMessage_->messageSize);
-
-        lock.unlock();
-
+        receive(message);
         std::cout << message << std::endl;
     }
+}
+
+void ChatRoom::receive(std::string& message)
+{
+    // Bloquear el mutex hasta salir de la función
+    std::unique_lock<std::mutex> lock(sharedMessage_->mutex);
+
+    while ( messageReceiveCounter_ >= sharedMessage_->messageCounter )
+        sharedMessage_->newMessage.wait(lock);
+
+    messageReceiveCounter_ = sharedMessage_->messageCounter;
+    message.assign(sharedMessage_->message, sharedMessage_->messageSize);
 }

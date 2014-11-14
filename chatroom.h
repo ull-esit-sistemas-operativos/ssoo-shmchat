@@ -21,6 +21,7 @@ public:
 
     // Conectar a la sala de chat indicada
     int connectTo(const std::string& chatRoomId);
+
     // Ejecutar el chat
     void run();
 
@@ -38,10 +39,15 @@ private:
     // compartida. El propietario es el responsable de su destrucción
     bool isSharedMemoryObjectOwner_;
 
-    // Enviar mensajes a la sala de chat
-    void send();
-    // Recibir mensajes de la sala de chat
-    void receive();
+    // Leer mensajes desde la entrada estándar y enviarlos a la sala de chat
+    void runSender();
+    // Recibir mensajes de la sala de chat y mostrarlos por la salida estándar
+    void runReceiver();
+
+    // Enviar um mensaje a la sala de chat
+    void send(const std::string& message);
+    // Recibir un mensaje de la sala de chat
+    void receive(std::string& message);
 };
 
 #endif // CHATROOM_H
