@@ -19,8 +19,6 @@
 #include <thread>
 #include <iostream>
 
-#include <ext/stdio_filebuf.h>
-
 /* @1@NOTA
  * Al investigar como funcionan las llamadas al sistema hay que consultar las
  * páginas del manual (p. ej. man shm_open) y observar en la parte superior
@@ -270,7 +268,7 @@ void ChatRoom::runSender()
             break;
         }
         else if ( message[0] == '!' ) {
-                execAndSend(message.substr(1));
+            execAndSend(message.substr(1));
         }
         else {
             send(message);
@@ -395,27 +393,25 @@ void ChatRoom::execAndSend(const std::string& command)
         // el de salida
         close(pipeFileDescriptors[1]);
 
+        /* @3@NOTA
+         * Enviamos de una sola vez toda la salida del comando para evitar
+         * perder líneas si las escribimos muy rápido línea a línea.
+         *
+         * Tenemos que leer varias veces porque no hay garantías de que read()
+         * nos devuelva toda la salida del comando de una sola vez.
+         */
+
         // Leer lo que envía el proceso hijo por la tubería y enviarlo a la
         // sala de chat.
-
-        /* @3@NOTA
-         * Lo que vamos a usar para leer de la tubería no es estándar.
-         * Es propio de GNU, aunque otros fabricantes tienen soluciones
-         * similares.
-         * http://manpages.ubuntu.com/manpages/hardy/man3/__gnu_cxx::stdio_filebuf.3.html
-         */
-        __gnu_cxx::stdio_filebuf<char> fbin(pipeFileDescriptors[0], std::ios::in);
-        std::istream ifs(&fbin);
-        while (! ifs.eof()) {
-            std::string line;
-            std::getline(ifs, line);
-            std::cout << line << std::endl;
-
-            // Enviamos y esperamos para simular los tiempos de espera al escribir.
-            // Si no lo hacemos, las líneas se envían muy rápido y no se reciben.
-            send(line);
-            usleep(100000);
+        std::string message;
+        while (1) {
+            char buffer[sizeof(sharedMessage_->message)];
+            int length = read(pipeFileDescriptors[0], buffer, sizeof(buffer));
+            if ( length <= 0 ) break;
+            message += std::string(buffer, length);
         }
+        std::cout << message;
+        send(std::string("!") + command + "\n" + message);
     }
     else {
         std::cerr << "error en fork(): " << strerror(errno) << std::endl;
