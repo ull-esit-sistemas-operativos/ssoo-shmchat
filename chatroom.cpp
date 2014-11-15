@@ -19,8 +19,6 @@
 #include <thread>
 #include <iostream>
 
-#include <ext/stdio_filebuf.h>
-
 /* @1@NOTA
  * Al investigar como funcionan las llamadas al sistema hay que consultar las
  * páginas del manual (p. ej. man shm_open) y observar en la parte superior
