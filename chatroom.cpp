@@ -79,7 +79,8 @@ ChatRoom::ChatRoom()
     : chatRoomId_(),
       sharedMessage_(nullptr),
       messageReceiveCounter_(0),
-      isSharedMemoryObjectOwner_(false)
+      isSharedMemoryObjectOwner_(false),
+      stopThreads(false)
 {
 
 }
@@ -226,19 +227,19 @@ void ChatRoom::run()
 
     // Espera a que el hilo de envío termine.
     send_thread.join();
+
+    // Indicar al hilo de recepción que termine y esperar.
+    // Mandar un mensaje permite saltarnos la espera en el hilo de recepción
+    stopThreads = true;
+    send("bye!");
+    receive_thread.join();
 }
 
 void ChatRoom::runSender()
 {
-<<<<<<< HEAD
     // El fin de archivo (EOF) en la entrada estándar se indica
     // pulsando Ctrl+D
     while ( ! std::cin.eof() ) {
-        std::cout << "-- ";
-
-=======
-    while (1) {
->>>>>>> mover el prompt a la recepción
         std::string message;
         std::getline(std::cin, message);
 
@@ -276,7 +277,7 @@ void ChatRoom::send(const std::string& message)
 
 void ChatRoom::runReceiver()
 {
-    while (1) {
+    while ( ! stopThreads ) {
         std::string message;
         std::string username;
 
@@ -292,7 +293,7 @@ void ChatRoom::receive(std::string& message, std::string& username)
     // Bloquear el mutex hasta salir de la función
     std::unique_lock<std::mutex> lock(sharedMessage_->mutex);
 
-    while ( messageReceiveCounter_ >= sharedMessage_->messageCounter )
+    while (messageReceiveCounter_ >= sharedMessage_->messageCounter)
         sharedMessage_->newMessage.wait(lock);
 
     messageReceiveCounter_ = sharedMessage_->messageCounter;
