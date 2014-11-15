@@ -79,8 +79,7 @@ ChatRoom::ChatRoom()
     : chatRoomId_(),
       sharedMessage_(nullptr),
       messageReceiveCounter_(0),
-      isSharedMemoryObjectOwner_(false),
-      stopThreads(false)
+      isSharedMemoryObjectOwner_(false)
 {
 
 }
@@ -228,11 +227,21 @@ void ChatRoom::run()
     // Espera a que el hilo de envío termine.
     send_thread.join();
 
-    // Indicar al hilo de recepción que termine y esperar.
-    // Mandar un mensaje permite saltarnos la espera en el hilo de recepción
-    stopThreads = true;
-    send("bye!");
-    receive_thread.join();
+    /* @2@NOTA
+     * Lo que viene acontinuación para cerrar correctamente los hilos es
+     * opcional ya que así nos aseguramos que se destruye el objeto de
+     * memoria compartida. Es decir, es conveniente hacerlo. Pero ahora
+     * que todo el mundo envía y recibe, el programa sigue funcionando
+     * aunque el objeto no sea destruido.
+     *
+     * Si no ponemos lo que sigue, al terminar el proceso con un hilo en
+     * ejecución el runtime llamará a std::terminate(), que por defecto
+     * hará que llegue la señal SIGABORT para abortar el proceso. Así
+     * el proceso terminará inmeditamente, sin que el destructor de este
+     * objeto tenga oportunidad de destruir el objeto de memoria compartida
+     * con shm_unlink();
+     */
+    receive_thread.detach();
 }
 
 void ChatRoom::runSender()
@@ -277,7 +286,7 @@ void ChatRoom::send(const std::string& message)
 
 void ChatRoom::runReceiver()
 {
-    while ( ! stopThreads ) {
+    while (1) {
         std::string message;
         std::string username;
 
