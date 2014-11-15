@@ -78,8 +78,9 @@ ChatRoom::SharedMessage::SharedMessage()
 ChatRoom::ChatRoom()
     : chatRoomId_(),
       sharedMessage_(nullptr),
-      messageReceiveCounter_(0),
-      isSharedMemoryObjectOwner_(false)
+      messageReceiveCounter_(0),      
+      isSharedMemoryObjectOwner_(false),
+      stopThreads(false)
 {
 
 }
@@ -228,20 +229,31 @@ void ChatRoom::run()
     send_thread.join();
 
     /* @2@NOTA
-     * Lo que viene acontinuación para cerrar correctamente los hilos es
-     * opcional ya que así nos aseguramos que se destruye el objeto de
-     * memoria compartida. Es decir, es conveniente hacerlo. Pero ahora
-     * que todo el mundo envía y recibe, el programa sigue funcionando
-     * aunque el objeto no sea destruido.
+     * Terminar correctamente los hilos es importante. Si no hacemos nada
+     * el hilo de recepción terminará al salir de esta función. Sin embargo
+     * no lo hará de forma normal sino que el runtime llamará a
+     * std::terminate(), que por defecto hará que llegue la señal SIGABORT
+     * para abortar el proceso. Así el proceso terminará inmeditamente,
+     * sin que el destructor de este objeto tenga oportunidad de destruir
+     * el objeto de memoria compartida con shm_unlink();
      *
-     * Si no ponemos lo que sigue, al terminar el proceso con un hilo en
-     * ejecución el runtime llamará a std::terminate(), que por defecto
-     * hará que llegue la señal SIGABORT para abortar el proceso. Así
-     * el proceso terminará inmeditamente, sin que el destructor de este
-     * objeto tenga oportunidad de destruir el objeto de memoria compartida
-     * con shm_unlink();
+     * Esto no es bueno pero tampoco es grave, ya que ahora que todo el
+     * mundo envía y recibe mensajes, no necesitamos el papel del propietario
+     * como el único que envía mensajes.
+     *
+     * Además esto se puede resolver ejecutando receive_thread.detach()
+     * antes de salir de esta función, ya que así no se ejecutará
+     * std::terminate()
+     *
+     * Sin embargo, en ambos casos, corremos el riesgo de que el hilo sea
+     * interrumpido con el mutex bloqueado. Entonces ningún otro hilo
+     * de ningún otro proceso podrá volver a usar las sala hasta que sea
+     * destruida y vuelta a crear. Por eso es mejor indicar al hilo de
+     * recepción que termine por sus propios medios.
      */
-    receive_thread.detach();
+    stopThreads = true;
+    sharedMessage_->newMessage.notify_all();
+    receive_thread.join();
 }
 
 void ChatRoom::runSender()
@@ -286,12 +298,12 @@ void ChatRoom::send(const std::string& message)
 
 void ChatRoom::runReceiver()
 {
-    while (1) {
+    while ( ! stopThreads ) {
         std::string message;
         std::string username;
 
         receive(message, username);
-        if ( username != username_ ) {
+        if ( ! stopThreads && username != username_ ) {
             std::cout << "++ " << username << ": " << message << std::endl;
         }
     }
@@ -302,10 +314,15 @@ void ChatRoom::receive(std::string& message, std::string& username)
     // Bloquear el mutex hasta salir de la función
     std::unique_lock<std::mutex> lock(sharedMessage_->mutex);
 
-    while (messageReceiveCounter_ >= sharedMessage_->messageCounter)
+    while ( ! stopThreads &&
+            messageReceiveCounter_ >= sharedMessage_->messageCounter)
+    {
         sharedMessage_->newMessage.wait(lock);
+    }
 
-    messageReceiveCounter_ = sharedMessage_->messageCounter;
-    message.assign(sharedMessage_->message, sharedMessage_->messageSize);
-    username.assign(sharedMessage_->username, sharedMessage_->usernameSize);
+    if ( ! stopThreads ) {
+        messageReceiveCounter_ = sharedMessage_->messageCounter;
+        message.assign(sharedMessage_->message, sharedMessage_->messageSize);
+        username.assign(sharedMessage_->username, sharedMessage_->usernameSize);
+    }
 }
