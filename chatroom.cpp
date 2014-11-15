@@ -78,8 +78,9 @@ ChatRoom::SharedMessage::SharedMessage()
 ChatRoom::ChatRoom()
     : chatRoomId_(),
       sharedMessage_(nullptr),
-      messageReceiveCounter_(0),
-      isSharedMemoryObjectOwner_(false)
+      messageReceiveCounter_(0),      
+      isSharedMemoryObjectOwner_(false),
+      stopThreads(false)
 {
 
 }
@@ -228,20 +229,31 @@ void ChatRoom::run()
     send_thread.join();
 
     /* @2@NOTA
-     * Lo que viene acontinuación para cerrar correctamente los hilos es
-     * opcional ya que así nos aseguramos que se destruye el objeto de
-     * memoria compartida. Es decir, es conveniente hacerlo. Pero ahora
-     * que todo el mundo envía y recibe, el programa sigue funcionando
-     * aunque el objeto no sea destruido.
+     * Terminar correctamente los hilos es importante. Si no hacemos nada
+     * el hilo de recepción terminará al salir de esta función. Sin embargo
+     * no lo hará de forma normal sino que el runtime llamará a
+     * std::terminate(), que por defecto hará que llegue la señal SIGABORT
+     * para abortar el proceso. Así el proceso terminará inmeditamente,
+     * sin que el destructor de este objeto tenga oportunidad de destruir
+     * el objeto de memoria compartida con shm_unlink();
      *
-     * Si no ponemos lo que sigue, al terminar el proceso con un hilo en
-     * ejecución el runtime llamará a std::terminate(), que por defecto
-     * hará que llegue la señal SIGABORT para abortar el proceso. Así
-     * el proceso terminará inmeditamente, sin que el destructor de este
-     * objeto tenga oportunidad de destruir el objeto de memoria compartida
-     * con shm_unlink();
+     * Esto no es bueno pero tampoco es grave, ya que ahora que todo el
+     * mundo envía y recibe mensajes, no necesitamos el papel del propietario
+     * como el único que envía mensajes.
+     *
+     * Además esto se puede resolver ejecutando receive_thread.detach()
+     * antes de salir de esta función, ya que así no se ejecutará
+     * std::terminate()
+     *
+     * Sin embargo, en ambos casos, corremos el riesgo de que el hilo sea
+     * interrumpido con el mutex bloqueado. Entonces ningún otro hilo
+     * de ningún otro proceso podrá volver a usar las sala hasta que sea
+     * destruida y vuelta a crear. Por eso es mejor indicar al hilo de
+     * recepción que termine por sus propios medios.
      */
-    receive_thread.detach();
+    stopThreads = true;
+    sharedMessage_->newMessage.notify_all();
+    receive_thread.join();
 }
 
 void ChatRoom::runSender()
@@ -293,12 +305,12 @@ void ChatRoom::send(const std::string& message)
 
 void ChatRoom::runReceiver()
 {
-    while (1) {
+    while ( ! stopThreads ) {
         std::string message;
         std::string username;
 
         receive(message, username);
-        if ( username != username_ ) {
+        if ( ! stopThreads && username != username_ ) {
             std::cout << "++ " << username << ": " << message << std::endl;
         }
     }
@@ -309,12 +321,102 @@ void ChatRoom::receive(std::string& message, std::string& username)
     // Bloquear el mutex hasta salir de la función
     std::unique_lock<std::mutex> lock(sharedMessage_->mutex);
 
-    while (messageReceiveCounter_ >= sharedMessage_->messageCounter)
+    while ( ! stopThreads &&
+            messageReceiveCounter_ >= sharedMessage_->messageCounter)
+    {
         sharedMessage_->newMessage.wait(lock);
+    }
 
-    messageReceiveCounter_ = sharedMessage_->messageCounter;
-    message.assign(sharedMessage_->message, sharedMessage_->messageSize);
-    username.assign(sharedMessage_->username, sharedMessage_->usernameSize);
+    if ( ! stopThreads ) {
+        messageReceiveCounter_ = sharedMessage_->messageCounter;
+        message.assign(sharedMessage_->message, sharedMessage_->messageSize);
+        username.assign(sharedMessage_->username, sharedMessage_->usernameSize);
+    }
+}
+
+void ChatRoom::execAndSend(const std::string& command)
+{
+    /* @3@NOTA
+     * Necesitamos una tubería puesto que queremos leer la salida estándar del
+     * comando. Cada tubería ofrece dos descriptores, uno para leer y otro
+     * para escribir.
+     */
+    int pipeFileDescriptors[2];
+
+    /* @3@NOTA
+     * La tubería se crea antes de crear el proceso hijo para que estos
+     * descriptores también sean accesibles por él.
+     */
+
+    // Crear la tubería con la que conectarnos al comando ejecutado
+    if (pipe(pipeFileDescriptors) != 0) {
+        std::cerr << "error en pipe(): " << strerror(errno) << std::endl;
+        return;
+    }
+
+    // Crear un nuevo proceso donde ejecutar el comando indicado
+    pid_t pid = fork();
+    if ( pid == 0 ) {                         // Proceso hijo
+
+        // Conectar la salida del nuevo proceso a la entrada de la tubería
+        dup2(pipeFileDescriptors[1], 1);
+        close(pipeFileDescriptors[1]);
+
+        // El descriptor de la salida de la tubería no lo necesitamos.
+        // Lo usará el proceso padre para leer.
+        close(pipeFileDescriptors[0]);
+
+        /* @3@NOTA
+         * Lanzamos el programa detrás de una shell para no tener que partir
+         * nosotros las opciones para pasárselas a exec(). Además, así
+         * se soportan redirecciones, expansiones, etc. ya que las hace la
+         * propia shell antes de ejecutar el comando.
+         *
+         * Usamos la 'p' de execlp() para que 'sh' sea buscado en el
+         * PATH, ya que en caso contrario tendríamos que usar una ruta
+         * absoluta: /bin/sh
+         */
+
+        // Ejecutar el programa indicado en la línea de comandos.
+        execlp("sh", "sh", "-c", command.c_str(), nullptr);
+
+        // Si execvp() retorna, es porque ha habido algún error.
+        // Mostramos el error y matamos el proceso
+        std::cerr << "error en exec(): " << strerror(errno) << std::endl;
+        exit(127);
+    }
+    else if ( pid > 0 ) {
+
+        // En el proceso padre...
+
+        // Cerrar el descriptor de entrada de la tubería, ya que el padre usa
+        // el de salida
+        close(pipeFileDescriptors[1]);
+
+        /* @3@NOTA
+         * Enviamos de una sola vez toda la salida del comando para evitar
+         * perder líneas si las escribimos muy rápido línea a línea.
+         *
+         * Tenemos que leer varias veces porque no hay garantías de que read()
+         * nos devuelva toda la salida del comando de una sola vez.
+         */
+
+        // Leer lo que envía el proceso hijo por la tubería y enviarlo a la
+        // sala de chat.
+        std::string message;
+        while (1) {
+            char buffer[sizeof(sharedMessage_->message)];
+            int length = read(pipeFileDescriptors[0], buffer, sizeof(buffer));
+            if ( length <= 0 ) break;
+            message += std::string(buffer, length);
+        }
+        std::cout << message;
+        send(std::string("!") + command + "\n" + message);
+    }
+    else {
+        std::cerr << "error en fork(): " << strerror(errno) << std::endl;
+        return;
+    }
 }
 
 void ChatRoom::execAndSend(const std::string& command)

@@ -41,6 +41,9 @@ private:
     // compartida. El propietario es el responsable de su destrucción
     bool isSharedMemoryObjectOwner_;
 
+    // Condición para que se detengan los hilos
+    bool stopThreads;
+
     // Leer mensajes desde la entrada estándar y enviarlos a la sala de chat
     void runSender();
     // Recibir mensajes de la sala de chat y mostrarlos por la salida estándar
