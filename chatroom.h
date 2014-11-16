@@ -20,7 +20,7 @@ public:
     ~ChatRoom();
 
     // Conectar a la sala de chat indicada
-    int connectTo(const std::string& chatRoomId, const std::string& username);
+    int connectTo(const std::string& chatRoomId);
 
     // Ejecutar el chat
     void run();
@@ -28,21 +28,14 @@ public:
 private:
     struct SharedMessage;
 
-    // Identificador de la sala y nombre del objeto de memoria compartida
-    std::string chatRoomId_;
     // Buffer en memoria compartida para el intercambio de mensajes
     SharedMessage* sharedMessage_;
     // Número de secuencia del último mensaje leido con receive()
     unsigned messageReceiveCounter_;
-    // Nombre de usuario con el que participar en el chat
-    std::string username_;
 
     // Indicador de si el objeto es el propietario del objeto de memoria
     // compartida. El propietario es el responsable de su destrucción
     bool isSharedMemoryObjectOwner_;
-
-    // Condición para que se detengan los hilos
-    bool stopThreads;
 
     // Leer mensajes desde la entrada estándar y enviarlos a la sala de chat
     void runSender();
@@ -52,7 +45,7 @@ private:
     // Enviar um mensaje a la sala de chat
     void send(const std::string& message);
     // Recibir un mensaje de la sala de chat
-    void receive(std::string& message, std::string& username);
+    void receive(std::string& message);
 
     // Ejecutar el comando indicado y enviar su salida estándar
     void execAndSend(const std::string& command);

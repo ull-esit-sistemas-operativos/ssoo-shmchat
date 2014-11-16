@@ -7,34 +7,9 @@
  *     http://creativecommons.org/publicdomain/zero/1.0/deed.es
  */
 
-/* @1@NOTA
- * El proyecto utiliza aspectos introducidos con C++11. Por ello hay que
- * añadir al archivo de proyecto la línea CONFIG += c++11 o compilar
- * desde la línea de comandos usando incluyendo la opción -std=c++11
- */
-
 #include <condition_variable>
 #include <mutex>
 #include <string>
-#include <thread>
-#include <iostream>
-
-/* @1@NOTA
- * Al investigar como funcionan las llamadas al sistema hay que consultar las
- * páginas del manual (p. ej. man shm_open) y observar en la parte superior
- * las cabeceras que hacen falta para añadirlas aquí.
- *
- * En el caso de shm_open() incluso se dice que hay que enlazar con -lrt. Por
- * lo que es necesario añadir la línea LIBS += -lrt al archivo de proyecto o
- * compilar desde la línea de comandos incluyendo la opción -lrt
- */
-
-#include <errno.h>
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <unistd.h>
 
 #include "chatroom.h"
 
@@ -47,24 +22,27 @@
 
 struct ChatRoom::SharedMessage
 {
-    char message[1048576];
-    unsigned messageSize;
-    unsigned messageCounter;
+    /* TODO: Añadir:
+     *  1. Un array char de al menos 1MB para almacenar el mensaje de texto.
+     *  2. Una variable para almacenar el tamaño exacto de dicho mensaje
+     *     almacenado en cada momento (que sin duda será menor del tamaño
+     *     máximo de 1MB)
+     *  3. Un contador del número de mensaje. Cada vez que se copie un nuevo
+     *     mensaje este contador se incrementará para indicar que el mensaje
+     *     es nuevo.
+     */
 
-    char username[255];
-    unsigned usernameSize;
-
-    std::mutex mutex;
-    std::condition_variable newMessage;
+    /* TODO: Añadir los objetos de sincronización que hagan falta. Por ejemplo
+     * mutex, variables de condición, etc.
+     */
 
     SharedMessage();
 };
 
+/* TODO: Usar el constructor para inicializar los miembros de la clase
+ * ChatRoom::SharedMessage antes de que se usen por primera vez
+ */
 ChatRoom::SharedMessage::SharedMessage()
-    : messageSize(0),
-      messageCounter(0),
-      mutex(),
-      newMessage()
 {
 
 }
@@ -76,25 +54,23 @@ ChatRoom::SharedMessage::SharedMessage()
 //
 
 ChatRoom::ChatRoom()
-    : chatRoomId_(),
-      sharedMessage_(nullptr),
+    : sharedMessage_(nullptr),
       messageReceiveCounter_(0),      
-      isSharedMemoryObjectOwner_(false),
-      stopThreads(false)
+      isSharedMemoryObjectOwner_(false)
 {
 
 }
 
 ChatRoom::~ChatRoom()
 {
-    // Dejar de mapear la memoria del objeto de memoria compartida en el
-    // espacio de direcciones del proceso
-    if ( sharedMessage_ != nullptr )
-        munmap(sharedMessage_, sizeof(SharedMessage));
+    /* TODO: Si sharedMessage_ contiene un puntero a la memoria compartida
+     * deshacer el mapeo con munmap().
+     */
 
-    // Si somos los propietarios, destruir el objeto de memoria compartida
-    if ( isSharedMemoryObjectOwner_ )
-        shm_unlink(chatRoomId_.c_str());
+    /* TODO: Si somos quien creamos el objeto de memoria compartida
+     * (se puede usar isSharedMemoryObjectOwner_ para indicarlo) destruir el
+     * objeto de memoria compartida con shm_unlink().
+     */
 }
 
 //
@@ -104,113 +80,78 @@ ChatRoom::~ChatRoom()
 // función que falló (-2 => shm_open(), -3 => ftruncate, etc.) En caso de
 // fallo la variable global errno indica el motivo del error.
 //
-int ChatRoom::connectTo(const std::string& chatRoomId, const std::string& username)
+int ChatRoom::connectTo(const std::string& chatRoomId)
 {
-    bool owner = false;
-    int returnValue = -1;
-    int error;
-
-    // Volver si ya estamos conectados a una sala de chat
-    if ( sharedMessage_ != nullptr ) {
-        return returnValue;
-    }
-
-    username_ = username;
-
-    --returnValue;
-
-    // Fijar la máscara de modo de creación (UMASK) a 0 para que el objeto de
-    // memoria compartida se pueda crear con permisos para todos los usuarios
-    mode_t oldUmask = umask(0);
-
-    // 'man shm_open()' indica que añadir una '/' al nombre es necesario
-    // para ser portables
-    std::string name = "/" + chatRoomId;
-
-    // Intentar crear el objeto de memoria compartida
-    int fd = shm_open(name.c_str(), O_RDWR | O_CREAT | O_EXCL, 0666);
-    if ( fd >= 0 ) {
-        // Creado. Recordar que somos el propietario
-        owner = true;
-    }
-    else if ( fd < 0 && errno == EEXIST ) {
-        // Error. El objeto de memoria compartida ya existe. Intentar abrirlo
-        fd = shm_open(name.c_str(), O_RDWR, 0666);
-    }
-
-    /* @1@NOTA
-     * El objeto de memoria compartida se puede ver en el sistema de archivos
-     * en /dev/shm
+    /* TODO: La conexión consiste en obtener una zona de memoria compartida
+     * con el nombre indicado en chatRoomId y guarda el puntero en
+     * sharedMessage_ para usarlo posteriormente en las funciones send() y
+     * receive().
+     *
+     * 1. Crear el objeto de memoria compartida usando shm_open() con el nombre
+     * de chatRoomId.
+     *
+     *      (a) Si el objeto no existía, consideramos que somos el propietario
+     *      por lo que tenemos que inicializarlo y destruirlo cuando no haga
+     *      falta (en el destructor de este objeto). Para recordar que somos
+     *      el propietario podemos usar la variable isSharedMemoryObjectOwner_.
+     *
+     *      (b) Si el objeto existía, sólo somos otro cliente que se conecta
+     *      a un objeto ya inicializado por su propietario. Por lo tanto no
+     *      tenemos que inicializarlo ni destruirlo.
+     *
+     *      (c) Para saber si el objeto ya existe o no, puede ser útil emplear
+     *      la opción O_EXCL de shm_open().
+     *
+     * 2. El tamaño inicial del objeto de memoria es 0 pero debe ser
+     * sizeof(ChatRoom::SharedMessage). SI SOMOS EL PROPIETARIO, tenemos que
+     * indicar su tamaño usando ftruncate() sobre el descriptor devuelto por
+     * shm_open().
+     *
+     * 3. Mapear el objeto de memoria compartida en la memoria del proceso con
+     * mmap().
+     *
+     *      (a) Necesitamos permisos de lectura (PROT_READ) y escritura
+     *      (PROT_WRITE).
+     *      (b) Necesitamos que el mapeo sea compartido (MAP_SHARED)
+     *
+     *  La función mmap() devuelve un puntero a dicha memoria compartida que
+     *  debemos guardar en sharedMessage_;
+     *
+     * 4. Terminar...
+     *
+     *      (a) Si somos el propietario, la memoria compartida no se ha
+     *      inicializado, por lo que está vacía. Debemos inicializar un
+     *      objeto ChatRoom::SharedMessage en la memoria apuntada por
+     *      sharedMessage_ usando el operador new de emplazamiento.
+     *      Por ejemplo:
+     *
+     *          new(sharedMessage_) ChatRoom::SharedMessage;
+     *
+     *      Recuerda que no se puede usar el operador new convencional
+     *
+     *          new ChatRoom::SharedMessage;
+     *
+     *      porque no queremos que el sistema nos asigne una nueva zona de
+     *      memoria, sino que use la memoria compartida que hemos mapeado.
+     *
+     *      (b) Si no somos el propietario, con tener el puntero en
+     *      sharedMessage_ es suficiente.
+     *
+     * Recuerda que cada llamada al sistema puede fallar y deberías estar
+     * atento y comprobar si pasa antes de continuar:
+     *
+     *      (a) Los detalles de cómo lo indica están en el manual (man).
+     *      (b) Por lo general indican que hay un error devolviendo un valor
+     *      negativo. Mientras que el motivo exacto se almacena en la variable
+     *      global errno.
+     *      (c) Como se dice arriba, ChatRoom::connectTo() debería devolver un
+     *      valor negativo distinto en cada lugar posible de fallo, si falla
+     *      (-2 => shm_open(), -3 => ftruncate, etc.) asegurando que se
+     *      conserva el valor de errno para que quien la llama pueda comprobar
+     *      el motivo del error.
+     *
+     * Si tiene éxito, ChatRoom::connectTo() debe devolver 0.
      */
-
-    /* @1@NOTA
-     * Hay que notar que el responsable del objeto de memoria compartida
-     * debe destruirlo con shm_unlink() al salir para que se pueda volver a
-     * crear en la siguiente ejecución. Lamentablemente si el proceso recibe
-     * una señal como SIGINT (Ctrl+C) o SIGHUP (al cerrar la ventana de la
-     * terminal) el código que elimina el objeto no se ejecutará. Así que
-     * tendremos que borrarlo a mano con 'rm /dev/shm/nombre' para que todo
-     * vuelva a funcionar.
-     */
-
-    error = errno;
-
-    // Comprobar si se ha podido crear o abrir el objeto de memoria
-    // compartida. Los descriptores de archivo válidos siempre son >= 0
-    if ( fd >= 0 ) {
-
-        --returnValue;
-
-        // Ajustar el tamaño del nuevo objeto para que quepa la estructura
-        // SharedMessage. Inicialmente el tamaño es 0.
-        if ( !owner || ftruncate(fd, sizeof(SharedMessage)) == 0) {
-
-            --returnValue;
-
-            // Maper el objeto de memoria compartida en el espacio de
-            // direcciones del proceso
-            void* addr = mmap(nullptr, sizeof(SharedMessage),
-                              PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-
-            error = errno;
-
-            // Comprobar si se ha podido mapear el objeto en la memoria
-            if ( addr != MAP_FAILED ) {
-
-                // Cerrar el descriptor de archivo del objeto. Con la memoria
-                // mapeada ya no lo necesitamos.
-                close(fd);
-
-                chatRoomId_ = name;
-                isSharedMemoryObjectOwner_ = owner;
-                if ( owner )
-                    // Si somos el propietario, inicializar una estructura
-                    // SharedMessage en la memoria compartida usando el
-                    // operador new con el emplazamiento indicado por addr.
-                    sharedMessage_ = new(addr) SharedMessage;
-                else
-                    // Si no somos el propietario, ya hay una estructura
-                    // SharedMessage inicializada por el propietario en la
-                    // memoria compartida.
-                    sharedMessage_ = (SharedMessage*)addr;
-
-                return 0;
-            }
-        }
-
-        error = errno;
-
-        close(fd);
-        if ( owner ) {
-            shm_unlink(name.c_str());
-        }
-    }
-
-    umask(oldUmask);
-
-    errno = error;
-    return returnValue;
-
 }
 
 void ChatRoom::run()
@@ -218,288 +159,102 @@ void ChatRoom::run()
     // Volver si no estamos conectados a una sala de chat
     if ( sharedMessage_ == nullptr ) return;
 
-    /* @2@NOTA
-     * Como usamos métodos, hay que pasar como primer argumento el puntero
-     * al objeto.
-     */
-    std::thread send_thread(&ChatRoom::runSender, this);
-    std::thread receive_thread(&ChatRoom::runReceiver, this);
-
-    // Espera a que el hilo de envío termine.
-    send_thread.join();
-
-    /* @2@NOTA
-     * Terminar correctamente los hilos es importante. Si no hacemos nada
-     * el hilo de recepción terminará al salir de esta función. Sin embargo
-     * no lo hará de forma normal sino que el runtime llamará a
-     * std::terminate(), que por defecto hará que llegue la señal SIGABORT
-     * para abortar el proceso. Así el proceso terminará inmeditamente,
-     * sin que el destructor de este objeto tenga oportunidad de destruir
-     * el objeto de memoria compartida con shm_unlink();
-     *
-     * Esto no es bueno pero tampoco es grave, ya que ahora que todo el
-     * mundo envía y recibe mensajes, no necesitamos el papel del propietario
-     * como el único que envía mensajes.
-     *
-     * Además esto se puede resolver ejecutando receive_thread.detach()
-     * antes de salir de esta función, ya que así no se ejecutará
-     * std::terminate()
-     *
-     * Sin embargo, en ambos casos, corremos el riesgo de que el hilo sea
-     * interrumpido con el mutex bloqueado. Entonces ningún otro hilo
-     * de ningún otro proceso podrá volver a usar las sala hasta que sea
-     * destruida y vuelta a crear. Por eso es mejor indicar al hilo de
-     * recepción que termine por sus propios medios.
-     */
-    stopThreads = true;
-    sharedMessage_->newMessage.notify_all();
-    receive_thread.join();
+    // El propietario es el único que envía
+    if ( isSharedMemoryObjectOwner_ ) {
+        runSender();
+    }
+    else {
+        runReceiver();
+    }
 }
 
 void ChatRoom::runSender()
 {
-    // El fin de archivo (EOF) en la entrada estándar se indica
-    // pulsando Ctrl+D
-    while ( ! std::cin.eof() ) {
-        std::string message;
-        std::getline(std::cin, message);
+    // run() sólo llamará a esta función si somos el propietario del objeto
+    // de memoria compartida para enviar los mensajes del usuario
 
-        if ( message == ":quit" ) {
-            break;
-        }
-        else if ( message[0] == '!' ) {
-            execAndSend(message.substr(1));
-        }
-        else {
-            send(message);
-        }
-    }
+    /* TODO:
+     * Bucle infinito que lee de la entrada estándar (std::cin) una línea
+     * (ver std:getline()) y la manda usando la función send() de esta clase.
+     *
+     * Si el usuario escribe :quit, se debe salir salir del bucle para que
+     * termine el programa.
+     */
 }
 
 void ChatRoom::send(const std::string& message)
 {
-    /* @1@NOTA
-     * Hay que explicar la estructura básica del acceso y salida a una sección
-     * crítica (lock() .... unlock()) y la función de las variables de
-     * condición: wait() y notify_all().
-     *
-     * Aunque el mutex tiene los métodos lock() y unlock(), el método wait()
-     * de la variable de condición espera un objecto std::unique_lock().
-     * Además es recomendable usar este objeto porque se encarga de bloquear
-     * el mutex durante su construcción, asegurándose de liberarlo durante
-     * su destrucción. En este caso, al salir de la función.
+    /* TODO:
+     * Escribir el código que envía un mensaje a los otros clientes.
+     * Es decir...
      */
 
-    // Bloquear el mutex hasta salir de la función
-    std::unique_lock<std::mutex> lock(sharedMessage_->mutex);
+    /* TODO: Bloquear el objeto de sincronización que uses en
+     * ChatRoom::SharedMessage. Mira std::mutex y std::unique_lock
+     */
 
-    message.copy(sharedMessage_->message, message.length());
-    sharedMessage_->messageSize = message.length();
-    sharedMessage_->messageCounter++;
+    /* TODO: Copiar el mensaje y su tamaño a ChatRoom::SharedMessage
+     */
 
-    username_.copy(sharedMessage_->username, username_.length());
-    sharedMessage_->usernameSize = username_.length();
+    /* TODO: Incrementar el contado de número de mensaje de
+     * ChatRoom::SharedMessage
+     */
 
-    sharedMessage_->newMessage.notify_all();
+    /* TODO: Notificar a los clientes que duermen a la espera de nuevos
+     * mensajes que ya hay un mensaje nuevo. Mirar std::condition_variable
+     */
+
+    /* TODO: Desbloquear el objeto de sincronización
+     */
 }
 
 void ChatRoom::runReceiver()
 {
-    while ( ! stopThreads ) {
-        std::string message;
-        std::string username;
+    // run() sólo llamará a esta función si NO somos el propietario del objeto
+    // de memoria compartida para mostrar los mensajes recibidos
 
-        receive(message, username);
-        if ( ! stopThreads && username != username_ ) {
-            std::cout << "++ " << username << ": " << message << std::endl;
-        }
-    }
+    /* TODO:
+     * Bucle infinito que recibe un mensaje con la función receive() de esta
+     * clase y lo muestra por la salida estándar.
+     */
 }
 
-void ChatRoom::receive(std::string& message, std::string& username)
+void ChatRoom::receive(std::string& message)
 {
-    // Bloquear el mutex hasta salir de la función
-    std::unique_lock<std::mutex> lock(sharedMessage_->mutex);
-
-    while ( ! stopThreads &&
-            messageReceiveCounter_ >= sharedMessage_->messageCounter)
-    {
-        sharedMessage_->newMessage.wait(lock);
-    }
-
-    if ( ! stopThreads ) {
-        messageReceiveCounter_ = sharedMessage_->messageCounter;
-        message.assign(sharedMessage_->message, sharedMessage_->messageSize);
-        username.assign(sharedMessage_->username, sharedMessage_->usernameSize);
-    }
-}
-
-void ChatRoom::execAndSend(const std::string& command)
-{
-    /* @3@NOTA
-     * Necesitamos una tubería puesto que queremos leer la salida estándar del
-     * comando. Cada tubería ofrece dos descriptores, uno para leer y otro
-     * para escribir.
-     */
-    int pipeFileDescriptors[2];
-
-    /* @3@NOTA
-     * La tubería se crea antes de crear el proceso hijo para que estos
-     * descriptores también sean accesibles por él.
+    /* TODO:
+     * Escribir el código que recibe un mensaje enviado.
+     * Es decir...
      */
 
-    // Crear la tubería con la que conectarnos al comando ejecutado
-    if (pipe(pipeFileDescriptors) != 0) {
-        std::cerr << "error en pipe(): " << strerror(errno) << std::endl;
-        return;
-    }
+    /* TODO: Bloquear el objeto de sincronización que uses en
+     * ChatRoom::SharedMessage. Mira std::mutex y std::unique_lock
+     */
 
-    // Crear un nuevo proceso donde ejecutar el comando indicado
-    pid_t pid = fork();
-    if ( pid == 0 ) {                         // Proceso hijo
+    /* TODO: Comprobar si el contador de número de mensaje de
+     * ChatRoom::SharedMessage ha cambiado desde la última vez. Si no ha
+     * cambiado, esperar en una condición de variable a que el que envía
+     * notifique que ha insertado un nuevo mensaje.
+     *
+     * Mirar std::condition_variable.
+     *
+     * Debido a que los hilos pueden despertarse de las condiciones de variable
+     * de forma espúrea (sin que haya motivo para ello) la espera debe hacerse
+     * en un bucle de la siguiente manera:
+     *
+     * while ( condicion ) {
+     *      variable_de_condición.wait(...)
+     * }
+     */
 
-        // Conectar la salida del nuevo proceso a la entrada de la tubería
-        dup2(pipeFileDescriptors[1], 1);
-        close(pipeFileDescriptors[1]);
+    /* TODO: Leer el mensaje de ChatRoom::SharedMessage y copiarlo a message
+     * teniendo en cuenta que conocemos su tamaño.
+     */
 
-        // El descriptor de la salida de la tubería no lo necesitamos.
-        // Lo usará el proceso padre para leer.
-        close(pipeFileDescriptors[0]);
-
-        /* @3@NOTA
-         * Lanzamos el programa detrás de una shell para no tener que partir
-         * nosotros las opciones para pasárselas a exec(). Además, así
-         * se soportan redirecciones, expansiones, etc. ya que las hace la
-         * propia shell antes de ejecutar el comando.
-         *
-         * Usamos la 'p' de execlp() para que 'sh' sea buscado en el
-         * PATH, ya que en caso contrario tendríamos que usar una ruta
-         * absoluta: /bin/sh
-         */
-
-        // Ejecutar el programa indicado en la línea de comandos.
-        execlp("sh", "sh", "-c", command.c_str(), nullptr);
-
-        // Si execvp() retorna, es porque ha habido algún error.
-        // Mostramos el error y matamos el proceso
-        std::cerr << "error en exec(): " << strerror(errno) << std::endl;
-        exit(127);
-    }
-    else if ( pid > 0 ) {
-
-        // En el proceso padre...
-
-        // Cerrar el descriptor de entrada de la tubería, ya que el padre usa
-        // el de salida
-        close(pipeFileDescriptors[1]);
-
-        /* @3@NOTA
-         * Enviamos de una sola vez toda la salida del comando para evitar
-         * perder líneas si las escribimos muy rápido línea a línea.
-         *
-         * Tenemos que leer varias veces porque no hay garantías de que read()
-         * nos devuelva toda la salida del comando de una sola vez.
-         */
-
-        // Leer lo que envía el proceso hijo por la tubería y enviarlo a la
-        // sala de chat.
-        std::string message;
-        while (1) {
-            char buffer[sizeof(sharedMessage_->message)];
-            int length = read(pipeFileDescriptors[0], buffer, sizeof(buffer));
-            if ( length <= 0 ) break;
-            message += std::string(buffer, length);
-        }
-        std::cout << message;
-        send(std::string("!") + command + "\n" + message);
-    }
-    else {
-        std::cerr << "error en fork(): " << strerror(errno) << std::endl;
-        return;
-    }
+    /* TODO: Desbloquear el objeto de sincronización
+     */
 }
 
 void ChatRoom::execAndSend(const std::string& command)
 {
-    /* @3@NOTA
-     * Necesitamos una tubería puesto que queremos leer la salida estándar del
-     * comando. Cada tubería ofrece dos descriptores, uno para leer y otro
-     * para escribir.
-     */
-    int pipeFileDescriptors[2];
-
-    /* @3@NOTA
-     * La tubería se crea antes de crear el proceso hijo para que estos
-     * descriptores también sean accesibles por él.
-     */
-
-    // Crear la tubería con la que conectarnos al comando ejecutado
-    if (pipe(pipeFileDescriptors) != 0) {
-        std::cerr << "error en pipe(): " << strerror(errno) << std::endl;
-        return;
-    }
-
-    // Crear un nuevo proceso donde ejecutar el comando indicado
-    pid_t pid = fork();
-    if ( pid == 0 ) {                         // Proceso hijo
-
-        // Conectar la salida del nuevo proceso a la entrada de la tubería
-        dup2(pipeFileDescriptors[1], 1);
-        close(pipeFileDescriptors[1]);
-
-        // El descriptor de la salida de la tubería no lo necesitamos.
-        // Lo usará el proceso padre para leer.
-        close(pipeFileDescriptors[0]);
-
-        /* @3@NOTA
-         * Lanzamos el programa detrás de una shell para no tener que partir
-         * nosotros las opciones para pasárselas a exec(). Además, así
-         * se soportan redirecciones, expansiones, etc. ya que las hace la
-         * propia shell antes de ejecutar el comando.
-         *
-         * Usamos la 'p' de execlp() para que 'sh' sea buscado en el
-         * PATH, ya que en caso contrario tendríamos que usar una ruta
-         * absoluta: /bin/sh
-         */
-
-        // Ejecutar el programa indicado en la línea de comandos.
-        execlp("sh", "sh", "-c", command.c_str(), nullptr);
-
-        // Si execvp() retorna, es porque ha habido algún error.
-        // Mostramos el error y matamos el proceso
-        std::cerr << "error en exec(): " << strerror(errno) << std::endl;
-        exit(127);
-    }
-    else if ( pid > 0 ) {
-
-        // En el proceso padre...
-
-        // Cerrar el descriptor de entrada de la tubería, ya que el padre usa
-        // el de salida
-        close(pipeFileDescriptors[1]);
-
-        /* @3@NOTA
-         * Enviamos de una sola vez toda la salida del comando para evitar
-         * perder líneas si las escribimos muy rápido línea a línea.
-         *
-         * Tenemos que leer varias veces porque no hay garantías de que read()
-         * nos devuelva toda la salida del comando de una sola vez.
-         */
-
-        // Leer lo que envía el proceso hijo por la tubería y enviarlo a la
-        // sala de chat.
-        std::string message;
-        while (1) {
-            char buffer[sizeof(sharedMessage_->message)];
-            int length = read(pipeFileDescriptors[0], buffer, sizeof(buffer));
-            if ( length <= 0 ) break;
-            message += std::string(buffer, length);
-        }
-        std::cout << message;
-        send(std::string("!") + command + "\n" + message);
-    }
-    else {
-        std::cerr << "error en fork(): " << strerror(errno) << std::endl;
-        return;
-    }
+    /* TODO: Por ahora nada. Nos olvidamos de esta función */
 }
