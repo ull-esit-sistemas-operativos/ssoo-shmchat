@@ -28,7 +28,7 @@ void showUsage (std::ostream& out = std::cout)
 {
     out << "Modo de empleo: "
         << programShortName()
-        << " [-h | --help] [[-u | --user] CHATROOMID]"
+        << " [[-u | --user username] CHATROOMID] | [-h | --help]"
         << std::endl;
 }
 
